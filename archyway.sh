@@ -93,11 +93,11 @@ fi
 # Step: Base install (skip if already exists)
 if [ ! -f /mnt/etc/fstab ]; then
     echo "Installing base system..."
-    pacstrap /mnt base linux linux-firmware vim sudo lvm2 grub efibootmgr networkmanager dhclient bash-completion man-db man-pages git reflector
+    pacstrap -K /mnt base linux linux-firmware vim sudo lvm2 grub efibootmgr networkmanager dhclient bash-completion man-db man-pages git reflector
     genfstab -U /mnt >> /mnt/etc/fstab
 fi
 
-# Step: chroot configuration
+# Step: chroot configuration (non-interactive)
 arch-chroot /mnt /bin/bash <<'EOF'
 set -e
 
@@ -120,19 +120,9 @@ HOSTS
 sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect keyboard keymap modconf block encrypt lvm2 filesystems fsck)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 
-# Root password setup
-while true; do
-    echo "Set root password:"
-    if passwd; then
-        break
-    else
-        echo "Password setting failed, try again..."
-    fi
-done
-
 # GRUB setup
-UUID=$(blkid -s UUID -o value "$(blkid | grep cryptroot | cut -d: -f1)")
-sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID:cryptroot root=/dev/vg0/root\"|" /etc/default/grub
+CRYPT_UUID=$(blkid -s UUID -o value /dev/disk/by-id/dm-name-cryptroot || blkid -s UUID -o value /dev/mapper/cryptroot)
+sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$CRYPT_UUID:cryptroot root=/dev/vg0/root\"|" /etc/default/grub
 
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
 grub-mkconfig -o /boot/grub/grub.cfg
@@ -141,4 +131,8 @@ grub-mkconfig -o /boot/grub/grub.cfg
 systemctl enable NetworkManager
 EOF
 
-echo "Installation finished successfully! You can now reboot."
+# Root password set separately (interactive)
+echo "Now setting root password..."
+arch-chroot /mnt passwd
+
+echo "✅ Installation finished successfully! You can now reboot."
