@@ -22,6 +22,7 @@ cat << "EOF"
 
 
 EOF
+
 sleep 2
 clear
 echo "Welcome to your custom Arch Linux installer!"
@@ -29,6 +30,18 @@ echo "Welcome to your custom Arch Linux installer!"
 # Step: Check internet and time
 timedatectl
 ping -c 1 archlinux.org || { echo "Internet not available!"; exit 1; }
+
+# Step: Cleanup broken cache and refresh keys
+echo "Cleaning pacman cache and refreshing keys..."
+rm -fv /var/cache/pacman/pkg/*.part || true
+rm -fv /var/cache/pacman/pkg/*.tar.zst || true
+pacman-key --init
+pacman-key --populate archlinux
+
+# Step: Update mirrorlist
+echo "Updating mirrorlist with fastest servers..."
+reflector --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+pacman -Sy
 
 # Ask for disk only if not already partitioned
 if ! ls /dev/mapper/cryptroot >/dev/null 2>&1; then
@@ -97,7 +110,7 @@ if [ ! -f /mnt/etc/fstab ]; then
     genfstab -U /mnt >> /mnt/etc/fstab
 fi
 
-# Step: chroot configuration (non-interactive)
+# Step: chroot configuration
 arch-chroot /mnt /bin/bash <<'EOF'
 set -e
 
@@ -120,9 +133,12 @@ HOSTS
 sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect keyboard keymap modconf block encrypt lvm2 filesystems fsck)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 
+# Root password setup
+passwd
+
 # GRUB setup
-CRYPT_UUID=$(blkid -s UUID -o value /dev/disk/by-id/dm-name-cryptroot || blkid -s UUID -o value /dev/mapper/cryptroot)
-sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$CRYPT_UUID:cryptroot root=/dev/vg0/root\"|" /etc/default/grub
+UUID=$(blkid -s UUID -o value "$(blkid | grep cryptroot | cut -d: -f1)")
+sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID:cryptroot root=/dev/vg0/root\"|" /etc/default/grub
 
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
 grub-mkconfig -o /boot/grub/grub.cfg
@@ -131,8 +147,4 @@ grub-mkconfig -o /boot/grub/grub.cfg
 systemctl enable NetworkManager
 EOF
 
-# Root password set separately (interactive)
-echo "Now setting root password..."
-arch-chroot /mnt passwd
-
-echo "✅ Installation finished successfully! You can now reboot."
+echo "Installation finished successfully! You can now reboot."
