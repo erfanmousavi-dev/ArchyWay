@@ -23,101 +23,93 @@ cat << "EOF"
 
 EOF
 
-sleep 2
-clear
-echo "Welcome to your custom Arch Linux installer!"
+set -euo pipefail
 
-# Step: Check internet and time
-timedatectl
-ping -c 1 archlinux.org || { echo "Internet not available!"; exit 1; }
+# رنگ‌ها برای پیام بهتر
+GREEN="\e[32m"
+RED="\e[31m"
+RESET="\e[0m"
 
-# Step: Cleanup broken cache and refresh keys
-echo "Cleaning pacman cache and refreshing keys..."
-rm -fv /var/cache/pacman/pkg/*.part || true
-rm -fv /var/cache/pacman/pkg/*.tar.zst || true
+echo -e "${GREEN}Starting Arch Linux installation with LVM on LUKS...${RESET}"
+
+# Sync clock
+timedatectl set-ntp true
+
+# Select disk
+lsblk
+read -rp "Enter target disk (e.g., /dev/sda, /dev/nvme0n1): " DISK
+
+echo -e "${RED}Warning: This will destroy all data on $DISK!${RESET}"
+read -rp "Are you sure you want to continue? (yes/no): " confirm
+if [[ "$confirm" != "yes" ]]; then
+    echo "Aborted."
+    exit 1
+fi
+
+# Wipe and partition
+wipefs -a "$DISK"
+sgdisk -Z "$DISK"
+sgdisk -n 1:0:+512M -t 1:ef00 "$DISK"
+sgdisk -n 2:0:0 -t 2:8300 "$DISK"
+
+# Assign partitions
+if [[ "$DISK" == *"nvme"* ]]; then
+    BOOT="${DISK}p1"
+    CRYPTPART="${DISK}p2"
+else
+    BOOT="${DISK}1"
+    CRYPTPART="${DISK}2"
+fi
+
+# Make filesystem
+mkfs.fat -F32 "$BOOT"
+
+# Setup LUKS
+cryptsetup luksFormat "$CRYPTPART"
+cryptsetup open "$CRYPTPART" cryptroot
+
+# Setup LVM
+pvcreate /dev/mapper/cryptroot
+vgcreate vg0 /dev/mapper/cryptroot
+
+# سوال از کاربر برای سایز پارتیشن‌ها
+read -rp "Enter swap size in GB (e.g., 2): " SWAP_SIZE
+read -rp "Enter root size in GB (e.g., 20): " ROOT_SIZE
+
+lvcreate -L "${SWAP_SIZE}G" vg0 -n swap
+lvcreate -L "${ROOT_SIZE}G" vg0 -n root
+lvcreate -l 100%FREE vg0 -n home
+
+# Filesystem setup
+mkfs.ext4 /dev/vg0/root
+mkfs.ext4 /dev/vg0/home
+mkswap /dev/vg0/swap
+
+# Mounting
+mount /dev/vg0/root /mnt
+mkdir -p /mnt/{boot,home}
+mount "$BOOT" /mnt/boot
+mount /dev/vg0/home /mnt/home
+swapon /dev/vg0/swap
+
+# Init keys
 pacman-key --init
 pacman-key --populate archlinux
 
-# Step: Update mirrorlist
-echo "Updating mirrorlist with fastest servers..."
-reflector --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
-pacman -Sy
+# Install base system
+pacstrap /mnt base linux linux-firmware vim sudo lvm2 networkmanager grub efibootmgr
 
-# Ask for disk only if not already partitioned
-if ! ls /dev/mapper/cryptroot >/dev/null 2>&1; then
-    lsblk
-    read -rp "Enter install disk (e.g., /dev/sda or /dev/nvme0n1): " DISK
+# Generate fstab
+genfstab -U /mnt >> /mnt/etc/fstab
 
-    echo "This will erase everything on $DISK. Are you sure? (yes/no): "
-    read -r confirm
-    if [[ "$confirm" != "yes" ]]; then
-        echo "Aborted"
-        exit 1
-    fi
-
-    wipefs -a "$DISK"
-    parted -s "$DISK" mklabel gpt
-
-    parted -s "$DISK" mkpart primary fat32 1MiB 1025MiB
-    parted -s "$DISK" set 1 esp on
-    parted -s "$DISK" mkpart primary ext4 1025MiB 100%
-
-    if [[ "$DISK" == *"nvme"* ]]; then
-        BOOT_PART="${DISK}p1"
-        CRYPT_PART="${DISK}p2"
-    else
-        BOOT_PART="${DISK}1"
-        CRYPT_PART="${DISK}2"
-    fi
-
-    mkfs.fat -F32 "$BOOT_PART"
-
-    echo "Encrypting root partition..."
-    cryptsetup luksFormat "$CRYPT_PART"
-    cryptsetup open "$CRYPT_PART" cryptroot
-
-    pvcreate /dev/mapper/cryptroot
-    vgcreate vg0 /dev/mapper/cryptroot
-
-    read -rp "Enter swap size in GB (e.g., 2): " SWAP_SIZE
-    read -rp "Enter root size in GB (e.g., 20): " ROOT_SIZE
-
-    lvcreate -L "${SWAP_SIZE}G" vg0 -n swap
-    lvcreate -L "${ROOT_SIZE}G" vg0 -n root
-    lvcreate -l 100%FREE vg0 -n home
-
-    mkfs.ext4 /dev/vg0/root
-    mkfs.ext4 /dev/vg0/home
-    mkswap /dev/vg0/swap
-    swapon /dev/vg0/swap
-
-    mount /dev/vg0/root /mnt
-    mkdir -p /mnt/{boot,home}
-    mount "$BOOT_PART" /mnt/boot
-    mount /dev/vg0/home /mnt/home
-else
-    echo "Encrypted volume already opened. Mounting..."
-    mount /dev/vg0/root /mnt || true
-    mount /dev/vg0/home /mnt/home || true
-    mount "$BOOT_PART" /mnt/boot || true
-    swapon /dev/vg0/swap || true
-fi
-
-# Step: Base install (skip if already exists)
-if [ ! -f /mnt/etc/fstab ]; then
-    echo "Installing base system..."
-    pacstrap -K /mnt base linux linux-firmware vim sudo lvm2 grub efibootmgr networkmanager dhclient bash-completion man-db man-pages git reflector
-    genfstab -U /mnt >> /mnt/etc/fstab
-fi
-
-# Step: chroot configuration
-arch-chroot /mnt /bin/bash <<'EOF'
+# Chroot
+arch-chroot /mnt /bin/bash << EOF
 set -e
 
-# Locale and time
+# Time, Locale
 ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
 hwclock --systohc
-sed -i '/en_US.UTF-8 UTF-8/s/^#//' /etc/locale.gen
+sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
 locale-gen
 echo "LANG=en_US.UTF-8" > /etc/locale.conf
 
@@ -129,22 +121,22 @@ cat << HOSTS > /etc/hosts
 127.0.1.1   archlinux.localdomain archlinux
 HOSTS
 
-# Initramfs
-sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect keyboard keymap modconf block encrypt lvm2 filesystems fsck)/' /etc/mkinitcpio.conf
+# Initramfs for encryption and lvm
+sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 
-# Root password setup
+# Set root password
 passwd
 
-# GRUB setup
-UUID=$(blkid -s UUID -o value "$(blkid | grep cryptroot | cut -d: -f1)")
-sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$UUID:cryptroot root=/dev/vg0/root\"|" /etc/default/grub
+# Configure GRUB
+CRYPTUUID=\$(blkid -s UUID -o value "$CRYPTPART")
+sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=\$CRYPTUUID:cryptroot root=/dev/vg0/root\"|" /etc/default/grub
 
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# Enable essential services
+# Enable services
 systemctl enable NetworkManager
 EOF
 
-echo "Installation finished successfully! You can now reboot."
+echo -e "${GREEN}Installation completed successfully! You can now reboot.${RESET}"
