@@ -78,7 +78,7 @@ while true; do
             swapon /dev/vg0/swap
             ;;
         2)
-            until pacstrap /mnt base linux linux-firmware vim sudo lvm2 networkmanager grub efibootmgr git; do
+            until pacstrap /mnt base linux linux-firmware vim lvm2 networkmanager grub efibootmgr; do
                 echo "pacstrap failed retrying in 3 sec..."
                 sleep 3
             done
@@ -115,55 +115,11 @@ grub-mkconfig -o /boot/grub/grub.cfg
 systemctl enable NetworkManager
 EOF
 
-            echo -e "✅ Base installation complete. You can now proceed to Post-install Setup (Option 3)."
+            echo -e "Base installation complete."
             ;;
         3)
-            read -rp "Enter username to create: " NEWUSER
-            arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$NEWUSER"
-            arch-chroot /mnt passwd "$NEWUSER"
-            arch-chroot /mnt sed -i 's/# %wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /etc/sudoers
-
-            arch-chroot /mnt /bin/bash << EOC
-set -e
-
-sudo -u "$NEWUSER" bash -c "yes | sudo pacman -Syu"
-yes | pacman -S ly hyprland pipewire alsa-utils wireplumber pavucontrol alacritty network-manager-applet wofi thunar waybar fastfetch git ttf-font-awesome lxappearance papirus-icon-theme
-
-systemctl enable ly
-
-mkdir -p /usr/share/themes /usr/share/icons
-
-git clone --depth=1 https://github.com/EliverLara/Nordic.git /usr/share/themes/Nordic
-
-git clone --depth=1 https://github.com/catppuccin/gtk.git /tmp/catppuccin-gtk
-/tmp/catppuccin-gtk/install.sh -t mocha -a nord -c all -d /usr/share/themes
-
-git clone --depth=1 https://github.com/catppuccin/papirus-folders.git /tmp/catppuccin-icons
-/tmp/catppuccin-icons/papirus-folders -t mocha -o nord
-/tmp/catppuccin-icons/papirus-folders -a nord --theme Papirus-Dark
-
-sudo -u "$NEWUSER" bash << EOFU
-mkdir -p /home/$NEWUSER/.config/hypr
-cp /usr/share/hypr/hyprland.conf /home/$NEWUSER/.config/hypr/
-
-echo "
-exec-once = waybar
-exec-once = nm-applet
-" >> /home/$NEWUSER/.config/hypr/hyprland.conf
-
-mkdir -p /home/$NEWUSER/.config/gtk-3.0
-cat << GTKCONF > /home/$NEWUSER/.config/gtk-3.0/settings.ini
-[Settings]
-gtk-theme-name=Nordic
-gtk-icon-theme-name=Papirus-Dark
-gtk-font-name=Sans 10
-GTKCONF
-EOFU
-
-chown -R $NEWUSER:$NEWUSER /home/$NEWUSER/.config
-EOC
-
-            echo -e "🎉 Post-install setup complete! Reboot and login as '$NEWUSER' to enjoy Hyprland with beautiful themes."
+            
+            echo -e "."
             ;;
         4)
             echo "Exiting."
