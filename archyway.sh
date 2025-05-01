@@ -1,8 +1,8 @@
 #!/bin/bash
 
 set -e 
-
 clear
+
 cat << "EOF"
 
 / ___|  ___ _ __(_)_ __ | |_ 
@@ -28,115 +28,144 @@ clear
 
 while true; do
     echo "Main Menu"
-    echo "1)Make Partitions"
-    echo "2)Install Base System"
-    echo "3)Exit"
+    echo "1) Make Partitions"
+    echo "2) Install Base System"
+    echo "3) Post-install Setup (Hyprland + Themes)"
+    echo "4) Exit"
     read -p "Please Enter an option : " choice
 
     case $choice in
         1)
-            # Sync clock
-timedatectl set-ntp true
+            timedatectl set-ntp true
 
-# Select disk
-lsblk
-read -rp "Enter target disk (e.g., /dev/sda, /dev/nvme0n1): " DISK
+            lsblk
+            read -rp "Enter target disk (e.g., /dev/sda, /dev/nvme0n1): " DISK
 
-# Wipe and partition
-wipefs -a "$DISK"
-sgdisk -Z "$DISK"
-sgdisk -n 1:0:+512M -t 1:ef00 "$DISK"
-sgdisk -n 2:0:0 -t 2:8300 "$DISK"
+            wipefs -a "$DISK"
+            sgdisk -Z "$DISK"
+            sgdisk -n 1:0:+512M -t 1:ef00 "$DISK"
+            sgdisk -n 2:0:0 -t 2:8300 "$DISK"
 
-# Assign partitions
-if [[ "$DISK" == *"nvme"* ]]; then
-    BOOT="${DISK}p1"
-    CRYPTPART="${DISK}p2"
-else
-    BOOT="${DISK}1"
-    CRYPTPART="${DISK}2"
-fi
+            if [[ "$DISK" == *"nvme"* ]]; then
+                BOOT="${DISK}p1"
+                CRYPTPART="${DISK}p2"
+            else
+                BOOT="${DISK}1"
+                CRYPTPART="${DISK}2"
+            fi
 
-# Make filesystem
-mkfs.fat -F32 "$BOOT"
+            mkfs.fat -F32 "$BOOT"
+            cryptsetup luksFormat "$CRYPTPART"
+            cryptsetup open "$CRYPTPART" cryptroot
+            pvcreate /dev/mapper/cryptroot
+            vgcreate vg0 /dev/mapper/cryptroot
 
-# Setup LUKS
-cryptsetup luksFormat "$CRYPTPART"
-cryptsetup open "$CRYPTPART" cryptroot
+            read -rp "Enter swap size in GB (e.g., 2): " SWAP_SIZE
+            read -rp "Enter root size in GB (e.g., 20): " ROOT_SIZE
 
-# Setup LVM
-pvcreate /dev/mapper/cryptroot
-vgcreate vg0 /dev/mapper/cryptroot
+            lvcreate -L "${SWAP_SIZE}G" vg0 -n swap
+            lvcreate -L "${ROOT_SIZE}G" vg0 -n root
+            lvcreate -l 100%FREE vg0 -n home
 
-read -rp "Enter swap size in GB (e.g., 2): " SWAP_SIZE
-read -rp "Enter root size in GB (e.g., 20): " ROOT_SIZE
+            mkfs.ext4 /dev/vg0/root
+            mkfs.ext4 /dev/vg0/home
+            mkswap /dev/vg0/swap
 
-lvcreate -L "${SWAP_SIZE}G" vg0 -n swap
-lvcreate -L "${ROOT_SIZE}G" vg0 -n root
-lvcreate -l 100%FREE vg0 -n home
-
-# Filesystem setup
-mkfs.ext4 /dev/vg0/root
-mkfs.ext4 /dev/vg0/home
-mkswap /dev/vg0/swap
-
-# Mounting
-mount /dev/vg0/root /mnt
-mkdir -p /mnt/{boot,home}
-mount "$BOOT" /mnt/boot
-mount /dev/vg0/home /mnt/home
-swapon /dev/vg0/swap
-
+            mount /dev/vg0/root /mnt
+            mkdir -p /mnt/{boot,home}
+            mount "$BOOT" /mnt/boot
+            mount /dev/vg0/home /mnt/home
+            swapon /dev/vg0/swap
             ;;
         2)
-            # Install base system
-until pacstrap /mnt base linux linux-firmware vim sudo lvm2 networkmanager grub efibootmgr; do
-    echo "pacstrap failed retrying in 3 sec..."
-    sleep 3
-    done
+            until pacstrap /mnt base linux linux-firmware vim sudo lvm2 networkmanager grub efibootmgr git; do
+                echo "pacstrap failed retrying in 3 sec..."
+                sleep 3
+            done
 
-# Generate fstab
-genfstab -U /mnt >> /mnt/etc/fstab
+            genfstab -U /mnt >> /mnt/etc/fstab
+            arch-chroot /mnt passwd
 
-# Passwd
-arch-chroot /mnt passwd
-# Chroot
-arch-chroot /mnt /bin/bash << EOF
+            read -rp "Enter Hostname : " HOST_NAME
+
+            arch-chroot /mnt /bin/bash << EOF
 set -e
-
-# Time, Locale
 ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
 hwclock --systohc
 sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
 locale-gen
 echo "LANG=en_US.UTF-8" > /etc/locale.conf
 
-# Hostname
-echo "archlinux" > /etc/hostname
+echo "$HOST_NAME" > /etc/hostname
 cat << HOSTS > /etc/hosts
 127.0.0.1   localhost
 ::1         localhost
-127.0.1.1   archlinux.localdomain archlinux
+127.0.1.1   $HOST_NAME.localdomain $HOST_NAME
 HOSTS
 
-# Initramfs for encryption and lvm
 sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 
-# Configure GRUB
 CRYPTUUID=\$(blkid -s UUID -o value "$CRYPTPART")
 sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=\$CRYPTUUID:cryptroot root=/dev/vg0/root\"|" /etc/default/grub
 
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# Enable services
 systemctl enable NetworkManager
 EOF
 
-echo -e "Installation completed successfully! You can now reboot."
+            echo -e "✅ Base installation complete. You can now proceed to Post-install Setup (Option 3)."
             ;;
         3)
+            read -rp "Enter username to create: " NEWUSER
+            arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$NEWUSER"
+            arch-chroot /mnt passwd "$NEWUSER"
+            arch-chroot /mnt sed -i 's/# %wheel ALL=(ALL) ALL/%wheel ALL=(ALL) ALL/' /etc/sudoers
+
+            arch-chroot /mnt /bin/bash << EOC
+set -e
+
+sudo -u "$NEWUSER" bash -c "yes | sudo pacman -Syu"
+yes | pacman -S ly hyprland pipewire alsa-utils wireplumber pavucontrol alacritty network-manager-applet wofi thunar waybar fastfetch git ttf-font-awesome lxappearance papirus-icon-theme
+
+systemctl enable ly
+
+mkdir -p /usr/share/themes /usr/share/icons
+
+git clone --depth=1 https://github.com/EliverLara/Nordic.git /usr/share/themes/Nordic
+
+git clone --depth=1 https://github.com/catppuccin/gtk.git /tmp/catppuccin-gtk
+/tmp/catppuccin-gtk/install.sh -t mocha -a nord -c all -d /usr/share/themes
+
+git clone --depth=1 https://github.com/catppuccin/papirus-folders.git /tmp/catppuccin-icons
+/tmp/catppuccin-icons/papirus-folders -t mocha -o nord
+/tmp/catppuccin-icons/papirus-folders -a nord --theme Papirus-Dark
+
+sudo -u "$NEWUSER" bash << EOFU
+mkdir -p /home/$NEWUSER/.config/hypr
+cp /usr/share/hypr/hyprland.conf /home/$NEWUSER/.config/hypr/
+
+echo "
+exec-once = waybar
+exec-once = nm-applet
+" >> /home/$NEWUSER/.config/hypr/hyprland.conf
+
+mkdir -p /home/$NEWUSER/.config/gtk-3.0
+cat << GTKCONF > /home/$NEWUSER/.config/gtk-3.0/settings.ini
+[Settings]
+gtk-theme-name=Nordic
+gtk-icon-theme-name=Papirus-Dark
+gtk-font-name=Sans 10
+GTKCONF
+EOFU
+
+chown -R $NEWUSER:$NEWUSER /home/$NEWUSER/.config
+EOC
+
+            echo -e "🎉 Post-install setup complete! Reboot and login as '$NEWUSER' to enjoy Hyprland with beautiful themes."
+            ;;
+        4)
             echo "Exiting."
             break
             ;;
