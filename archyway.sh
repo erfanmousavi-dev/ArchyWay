@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -e 
 
 clear
 cat << "EOF"
@@ -23,28 +23,24 @@ cat << "EOF"
 
 EOF
 
-set -euo pipefail
+sleep 2
+clear
 
-# رنگ‌ها برای پیام بهتر
-GREEN="\e[32m"
-RED="\e[31m"
-RESET="\e[0m"
+while true; do
+    echo "Main Menu"
+    echo "1)Make Partitions"
+    echo "2)Install Base System"
+    echo "3)Exit"
+    read -p "Please Enter an option : " choice
 
-echo -e "${GREEN}Starting Arch Linux installation with LVM on LUKS...${RESET}"
-
-# Sync clock
+    case $choice in
+        1)
+            # Sync clock
 timedatectl set-ntp true
 
 # Select disk
 lsblk
 read -rp "Enter target disk (e.g., /dev/sda, /dev/nvme0n1): " DISK
-
-echo -e "${RED}Warning: This will destroy all data on $DISK!${RESET}"
-read -rp "Are you sure you want to continue? (yes/no): " confirm
-if [[ "$confirm" != "yes" ]]; then
-    echo "Aborted."
-    exit 1
-fi
 
 # Wipe and partition
 wipefs -a "$DISK"
@@ -72,7 +68,6 @@ cryptsetup open "$CRYPTPART" cryptroot
 pvcreate /dev/mapper/cryptroot
 vgcreate vg0 /dev/mapper/cryptroot
 
-# سوال از کاربر برای سایز پارتیشن‌ها
 read -rp "Enter swap size in GB (e.g., 2): " SWAP_SIZE
 read -rp "Enter root size in GB (e.g., 20): " ROOT_SIZE
 
@@ -92,16 +87,19 @@ mount "$BOOT" /mnt/boot
 mount /dev/vg0/home /mnt/home
 swapon /dev/vg0/swap
 
-# Init keys
-pacman-key --init
-pacman-key --populate archlinux
-
-# Install base system
-pacstrap /mnt base linux linux-firmware vim sudo lvm2 networkmanager grub efibootmgr
+            ;;
+        2)
+            # Install base system
+until pacstrap /mnt base linux linux-firmware vim sudo lvm2 networkmanager grub efibootmgr; do
+    echo "pacstrap failed retrying in 3 sec..."
+    sleep 3
+    done
 
 # Generate fstab
 genfstab -U /mnt >> /mnt/etc/fstab
 
+# Passwd
+arch-chroot /mnt passwd
 # Chroot
 arch-chroot /mnt /bin/bash << EOF
 set -e
@@ -125,9 +123,6 @@ HOSTS
 sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 
-# Set root password
-passwd
-
 # Configure GRUB
 CRYPTUUID=\$(blkid -s UUID -o value "$CRYPTPART")
 sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=\$CRYPTUUID:cryptroot root=/dev/vg0/root\"|" /etc/default/grub
@@ -139,4 +134,15 @@ grub-mkconfig -o /boot/grub/grub.cfg
 systemctl enable NetworkManager
 EOF
 
-echo -e "${GREEN}Installation completed successfully! You can now reboot.${RESET}"
+echo -e "Installation completed successfully! You can now reboot."
+            ;;
+        3)
+            echo "Exiting."
+            break
+            ;;
+        *)
+            echo "Invalid option."
+            ;;
+    esac
+    echo
+done
