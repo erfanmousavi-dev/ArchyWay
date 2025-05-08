@@ -25,17 +25,6 @@ EOF
 
 sleep 2
 clear
-
-while true; do
-    echo "Main Menu"
-    echo "1) Make Partitions"
-    echo "2) Install Base System"
-    echo "3) Post-install Setup (Hyprland + Themes)"
-    echo "4) Exit"
-    read -p "Please Enter an option : " choice
-
-    case $choice in
-        1)
             timedatectl set-ntp true
 
             lsblk
@@ -76,9 +65,7 @@ while true; do
             mount "$BOOT" /mnt/boot
             mount /dev/vg0/home /mnt/home
             swapon /dev/vg0/swap
-            ;;
-        2)
-            until pacstrap /mnt base linux linux-firmware vim lvm2 networkmanager grub efibootmgr; do
+            until pacstrap /mnt base linux linux-firmware vim lvm2 grub efibootmgr dhclient; do
                 echo "pacstrap failed retrying in 3 sec..."
                 sleep 3
             done
@@ -111,23 +98,4 @@ sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=\$CRYPTUU
 
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
 grub-mkconfig -o /boot/grub/grub.cfg
-
-systemctl enable NetworkManager
 EOF
-
-            echo -e "Base installation complete."
-            ;;
-        3)
-            
-            echo -e "."
-            ;;
-        4)
-            echo "Exiting."
-            break
-            ;;
-        *)
-            echo "Invalid option."
-            ;;
-    esac
-    echo
-done
