@@ -21,9 +21,10 @@ cat << "EOF"
 
 
 EOF
-
 sleep 2
 clear
+
+base_install(){
             timedatectl set-ntp true
 
             lsblk
@@ -98,3 +99,70 @@ clear
 		grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
 		grub-mkconfig -o /boot/grub/grub.cfg
 EOF
+}
+
+post_install(){
+    while true; do
+  clear
+  echo "======================="
+  echo "       Post Install       "
+  echo "======================="
+  echo "1. Post install in arch installation iso "
+  echo "2. Post install in installed arch system "
+  echo "3. Back"
+  echo
+  read -p "Choose an option [1-3]: " choice
+
+  case $choice in
+    1)
+      arch-chroot /mnt /bin/bash << EOF
+        git clone https://github.com/erfanmousavi-dev/Arch-Hyprland
+        cd Arch-Hyprland
+        ./install.sh
+EOF
+      ;;
+    2)
+      git clone https://github.com/erfanmousavi-dev/Arch-Hyprland.git
+      cd Arch-Hyprland
+      ./install.sh
+      ;;
+    3)
+      echo "Exiting..."
+      break
+      ;;
+    *)
+      echo "Invalid option!"
+      ;;
+  esac
+
+}
+while true; do
+  clear
+  echo "======================="
+  echo "       Main Menu       "
+  echo "======================="
+  echo "1. Install Base System"
+  echo "2. Install Desktop Environment"
+  echo "3. Exit"
+  echo
+  read -p "Choose an option [1-3]: " choice
+
+  case $choice in
+    1)
+      base_install()
+      ;;
+    2)
+      post_install()
+      ;;
+    3)
+      echo "Exiting..."
+      break
+      ;;
+    *)
+      echo "Invalid option!"
+      ;;
+  esac
+
+  echo
+  read -p "Press Enter to continue..." dummy
+done
