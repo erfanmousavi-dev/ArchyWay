@@ -1,6 +1,5 @@
 #!/bin/bash
 
-set -e 
 clear
 
 cat << "EOF"
@@ -66,36 +65,36 @@ clear
             mount /dev/vg0/home /mnt/home
             swapon /dev/vg0/swap
             until pacstrap /mnt base linux linux-firmware vim lvm2 grub efibootmgr dhclient; do
-                echo "pacstrap failed retrying in 3 sec..."
+                echo "Pacstrap failed retrying in 3 sec..."
                 sleep 3
             done
 
             genfstab -U /mnt >> /mnt/etc/fstab
             arch-chroot /mnt passwd
 
-            read -rp "Enter Hostname : " HOST_NAME
+            read -rp "Enter System Hostname : " HOST_NAME
 
             arch-chroot /mnt /bin/bash << EOF
-set -e
-ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
-hwclock --systohc
-sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-locale-gen
-echo "LANG=en_US.UTF-8" > /etc/locale.conf
+		set -e
+		ln -sf /usr/share/zoneinfo/Asia/Tehran /etc/localtime
+		hwclock --systohc
+		sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+		locale-gen
+		echo "LANG=en_US.UTF-8" > /etc/locale.conf
 
-echo "$HOST_NAME" > /etc/hostname
-cat << HOSTS > /etc/hosts
-127.0.0.1   localhost
-::1         localhost
-127.0.1.1   $HOST_NAME.localdomain $HOST_NAME
-HOSTS
+		echo "$HOST_NAME" > /etc/hostname
+		cat << HOSTS > /etc/hosts
+		127.0.0.1   localhost
+		::1         localhost
+		127.0.1.1   $HOST_NAME.localdomain $HOST_NAME
+		HOSTS
 
-sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems)/' /etc/mkinitcpio.conf
-mkinitcpio -P
+		sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems)/' /etc/mkinitcpio.conf
+		mkinitcpio -P
 
-CRYPTUUID=\$(blkid -s UUID -o value "$CRYPTPART")
-sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=\$CRYPTUUID:cryptroot root=/dev/vg0/root\"|" /etc/default/grub
+		CRYPTUUID=\$(blkid -s UUID -o value "$CRYPTPART")
+		sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=\$CRYPTUUID:cryptroot root=/dev/vg0/root\"|" /etc/default/grub
 
-grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
-grub-mkconfig -o /boot/grub/grub.cfg
+		grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+		grub-mkconfig -o /boot/grub/grub.cfg
 EOF
