@@ -123,13 +123,17 @@ post_install() {
         case $choice in
             1)
                 arch-chroot /mnt /bin/bash << EOF
+read -rp "Enter your username : " user_name
+su $user_name
 git clone https://github.com/erfanmousavi-dev/Arch-Hyprland
 cd Arch-Hyprland
 ./install.sh
 EOF
                 ;;
             2)
-                git clone https://github.com/erfanmousavi-dev/Arch-Hyprland.git
+                read -rp "Enter your username : " user_name
+		su $user_name
+		git clone https://github.com/erfanmousavi-dev/Arch-Hyprland.git
                 cd Arch-Hyprland
                 ./install.sh
                 ;;
